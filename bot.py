@@ -39,7 +39,7 @@ STATUS_OPTIONS = ["Qabul qilindi", "Jarayonda", "Yakunlandi", "Bekor qilindi"]
 # Client part
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "Assalomu alaykum! Iltimos, so'rovingizni yuboring, biz uni tez orada hal qilamiz. Agar yordam kerak bo'lsa, yozing /chat.")
+    bot.reply_to(message, "Assalomu alaykum! Iltimos, so'rovingizni yuboring, biz uni tez orada hal qilamiz.")
 
 # Клиент: Включить чат с оператором
 @bot.message_handler(commands=['chat'])
