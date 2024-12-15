@@ -5,7 +5,7 @@ import json
 import os
 
 # Token for the bot
-TOKEN = "7340973464:AAF1ZisHkyyF7TurmG4euny8EM2ijCcaoNg"
+TOKEN = "7656921140:AAHm8fFr47bqNVYyAN0oiMr0j3j9ZULH_qk"
 bot = telebot.TeleBot(TOKEN)
 
 # Path to the file where requests are stored
@@ -39,7 +39,7 @@ STATUS_OPTIONS = ["Qabul qilindi", "Jarayonda", "Yakunlandi", "Bekor qilindi"]
 # Client part
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "Assalomu alaykum! Iltimos, so'rovingizni yuboring, biz uni tez orada hal qilamiz.")
+    bot.reply_to(message, "Assalomu alaykum! Iltimos, so'rovingizni yuboring, biz uni tez orada hal qilamiz. Agar yordam kerak bo'lsa, yozing /chat.")
 
 # Клиент: Включить чат с оператором
 @bot.message_handler(commands=['chat'])
@@ -94,25 +94,30 @@ def create_request(message):
     global request_counter
     request_counter += 1
     request_id = request_counter
-    deadline = datetime.now() + timedelta(days=7)  # Deadline set to 7 days from now
+    deadline = datetime.now() + timedelta(days=7)
     requests[request_id] = {
         "client_id": message.chat.id,
-        "client_name": message.from_user.full_name,
+        "client_name": f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip(),
         "text": message.text,
         "status": "Yangi",
-        "deadline": deadline.strftime('%Y-%m-%d %H:%M:%S')  # Store deadline as string
+        "deadline": deadline.strftime('%Y-%m-%d %H:%M:%S')
     }
     save_requests()
-    
-    # Notify admins about the new request
-    for admin in ADMINS:
-        bot.send_message(admin, f"Yangi zayavka! #{request_id}\n"
-                                f"Ism: {message.from_user.full_name}\n"
-                                f"Matn: {message.text}\n"
-                                f"Deadline: {deadline.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    bot.reply_to(message, f"Rahmat! So'rovingiz qabul qilindi. Uning raqami: <b>#{request_id}</b>\n"
-                          f"Deadline: <b>{deadline.strftime('%Y-%m-%d %H:%M:%S')}</b>", parse_mode='HTML')
+    for admin in ADMINS:
+        bot.send_message(
+            admin,
+            f"Yangi zayavka! #{request_id}\n"
+            f"Ism: {requests[request_id]['client_name']}\n"
+            f"Matn: {message.text}\n"
+            f"Deadline: {deadline.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+    bot.reply_to(
+        message,
+        f"Rahmat! So'rovingiz qabul qilindi. Uning raqami: <b>#{request_id}</b>\nDeadline: <b>{deadline.strftime('%Y-%m-%d %H:%M:%S')}</b>",
+        parse_mode='HTML'
+    )
 
 @bot.message_handler(func=lambda message: not message.text.startswith('/') and message.chat.id in active_chats)
 def chat_is_active_warning(message):
@@ -122,14 +127,76 @@ def chat_is_active_warning(message):
 def my_requests(message):
     client_requests = [req_id for req_id, req in requests.items() if req["client_id"] == message.chat.id]
     if client_requests:
-        text = "<b>Sizning so'rovlaringiz:</b>\n"
+        keyboard = InlineKeyboardMarkup()
         for req_id in client_requests:
-            status = requests[req_id]['status']
-            deadline = requests[req_id]['deadline']
-            text += f"<b>#{req_id}</b> - Status: {status}, Deadline: {deadline}\n"
-        bot.reply_to(message, text, parse_mode='HTML')
+            status = requests[req_id]["status"]
+            # Формируем кнопку с ID и статусом
+            button = InlineKeyboardButton(text=f"#{req_id} - {status}", callback_data=f"view_request_{req_id}")
+            keyboard.add(button)
+        bot.send_message(
+            message.chat.id,
+            "<b>Sizning so'rovlaringiz:</b>\nKerakli so'rovni tanlang.",
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
     else:
-        bot.reply_to(message, "Hozircha sizning hech qanday so'rovingiz mavjud emas.")
+        bot.send_message(message.chat.id, "Hozircha sizning hech qanday so'rovingiz mavjud emas.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("view_request_"))
+def view_request(call):
+    req_id = int(call.data.split("_")[2])
+    request_info = requests.get(req_id)
+    if request_info:
+        client_name = request_info["client_name"]
+        text = request_info["text"]
+        status = request_info["status"]
+        deadline = request_info["deadline"]
+        
+        details = (
+            f"<b>So'rov #{req_id}</b>\n"
+            f"<b>Mijoz:</b> {client_name}\n"
+            f"<b>Matn:</b> {text}\n"
+            f"<b>Status:</b> {status}\n"
+            f"<b>Deadline:</b> {deadline}"
+        )
+        
+        # Добавление кнопки "⬅️ Orqaga"
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_requests"))
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=details,
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+    else:
+        bot.answer_callback_query(call.id, "So'rov topilmadi.")
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_requests")
+def back_to_requests(call):
+    client_requests = [req_id for req_id, req in requests.items() if req["client_id"] == call.message.chat.id]
+    if client_requests:
+        keyboard = InlineKeyboardMarkup()
+        for req_id in client_requests:
+            status = requests[req_id]["status"]
+            # Формируем кнопку с ID и статусом
+            button = InlineKeyboardButton(text=f"#{req_id} - {status}", callback_data=f"view_request_{req_id}")
+            keyboard.add(button)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="<b>Sizning so'rovlaringiz:</b>\nKerakli so'rovni tanlang.",
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+    else:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Hozircha sizning hech qanday so'rovingiz mavjud emas."
+        )
 
 @bot.message_handler(func=lambda message: message.text.startswith('#'))
 def view_request_details(message):
