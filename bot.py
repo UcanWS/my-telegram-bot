@@ -5,7 +5,7 @@ import json
 import os
 
 # Token for the bot
-TOKEN = "7656921140:AAHm8fFr47bqNVYyAN0oiMr0j3j9ZULH_qk"
+TOKEN = "7340973464:AAFM8WrkRELL4aSSYPBLQLf-hLWM3WbQ3mY"
 bot = telebot.TeleBot(TOKEN)
 
 # Path to the file where requests are stored
