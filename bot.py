@@ -194,7 +194,7 @@ def voting_results(message):
     text = f"<b>Ovoz berish natijalari:</b>\n{question}\n\n"
     for option_id, option in options.items():
         voters = ", ".join(option["votes"])
-        text += f"<b>{option['text']}</b> : {len(option["votes"])} ta ovoz.\nOvoz berganlar: {voters if voters else 'Hech kim'}\n\n"
+        text += f"<b>{option['text']}</b> : {len(option['votes'])} ta ovoz.\nOvoz berganlar: {voters if voters else 'Hech kim'}\n\n"
 
     bot.send_message(message.chat.id, text, parse_mode='HTML')
 
