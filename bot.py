@@ -10,8 +10,21 @@ bot = telebot.TeleBot(TOKEN)
 
 # Path to the file where requests are stored
 REQUESTS_FILE = "requests.json"
+VOTING_FILE = "voting.json"
 active_chats = {}
 
+# Load existing voting data from the file
+def load_voting():
+    if os.path.exists(VOTING_FILE):
+        with open(VOTING_FILE, 'r', encoding='utf-8') as file:
+            return json.load(file)
+    return {}
+
+# Save voting data to the file
+def save_voting():
+    with open(VOTING_FILE, 'w', encoding='utf-8') as file:
+        json.dump(voting_data, file, ensure_ascii=False, indent=4)
+        
 # Load existing requests from the file if it exists
 def load_requests():
     if os.path.exists(REQUESTS_FILE):
@@ -28,6 +41,7 @@ def save_requests():
 
 # Request storage
 requests = load_requests()
+voting_data = load_voting()
 request_counter = max(requests.keys(), default=0)  # Set counter to the highest ID in the requests file
 
 # Administrators
@@ -40,6 +54,150 @@ STATUS_OPTIONS = ["Qabul qilindi", "Jarayonda", "Yakunlandi", "Bekor qilindi"]
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     bot.reply_to(message, "Assalomu alaykum! Iltimos, so'rovingizni yuboring, biz uni tez orada hal qilamiz. Agar yordam kerak bo'lsa, yozing /chat.")
+
+
+# Хранилище активных голосований
+active_polls = {}  # Формат: {poll_id: {"question": str, "options": list, "votes": dict}}
+
+# Voting initialization
+def initialize_voting():
+    if "current_voting" not in voting_data:
+        voting_data["current_voting"] = {
+            "question": None,
+            "options": {},
+            "votes": {},
+        }
+        save_voting()
+
+initialize_voting()
+
+# Command to start a new voting (admin only)
+@bot.message_handler(commands=['startvoting'])
+def start_voting(message):
+    if message.chat.id in ADMINS:
+        bot.send_message(message.chat.id, "Iltimos, ovoz berish savolini kiriting:")
+        bot.register_next_step_handler(message, set_voting_question)
+    else:
+        bot.reply_to(message, "Bu buyruq faqat administratorlar uchun.")
+
+def set_voting_question(message):
+    question = message.text
+    voting_data["current_voting"] = {
+        "question": question,
+        "options": {},
+        "votes": {},
+    }
+    save_voting()
+    bot.send_message(message.chat.id, "Savol o'rnatildi. Endi ovoz berish variantlarini kiriting (har bir variantni alohida yuboring, /done tugallash uchun).")
+    bot.register_next_step_handler(message, add_voting_options)
+
+def add_voting_options(message):
+    if message.text == '/done':
+        save_voting()
+        options = voting_data["current_voting"]["options"]
+        if options:
+            bot.send_message(message.chat.id, "Ovoz berish muvaffaqiyatli boshlandi.")
+            announce_voting()
+        else:
+            bot.send_message(message.chat.id, "Hech qanday variant kiritilmadi. Ovoz berish bekor qilindi.")
+    else:
+        option_id = len(voting_data["current_voting"]["options"]) + 1
+        voting_data["current_voting"]["options"][option_id] = {
+            "text": message.text,
+            "votes": []
+        }
+        save_voting()
+        bot.send_message(message.chat.id, f"Variant qo'shildi: {message.text}. Yana birini kiriting yoki /done tugallash uchun.")
+        bot.register_next_step_handler(message, add_voting_options)
+
+# Announce voting to all users
+def announce_voting():
+    question = voting_data["current_voting"]["question"]
+    options = voting_data["current_voting"]["options"]
+    markup = InlineKeyboardMarkup()
+    for option_id, option in options.items():
+        markup.add(InlineKeyboardButton(text=option["text"], callback_data=f"vote_{option_id}"))
+    for user_id in set(req["client_id"] for req in requests.values()):
+        try:
+            bot.send_message(user_id, f"<b>Ovoz berish boshlandi!</b>\n\n{question}", reply_markup=markup, parse_mode='HTML')
+        except Exception as e:
+            print(f"Failed to send voting message to {user_id}: {e}")
+
+# Voting command to view current voting
+@bot.message_handler(commands=['voting'])
+def current_voting(message):
+    question = voting_data["current_voting"].get("question")
+    options = voting_data["current_voting"].get("options", {})
+
+    if not question:
+        bot.reply_to(message, "Hozircha hech qanday ovoz berish mavjud emas.")
+        return
+
+    user_votes = voting_data["current_voting"].get("votes", {}).get(str(message.chat.id))
+
+    if user_votes:
+        bot.reply_to(message, "Siz allaqachon ovoz bergansiz.")
+        return
+
+    markup = InlineKeyboardMarkup()
+    for option_id, option in options.items():
+        markup.add(InlineKeyboardButton(text=option["text"], callback_data=f"vote_{option_id}"))
+
+    bot.send_message(message.chat.id, f"<b>Joriy ovoz berish:</b>\n{question}\n\nVariantlardan birini tanlang:", reply_markup=markup, parse_mode='HTML')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("vote_"))
+def handle_vote(call):
+    try:
+        # Извлекаем ID варианта из callback_data
+        option_id = call.data.split("_")[1]
+
+        # Проверяем, существует ли указанный вариант
+        if option_id not in voting_data["current_voting"]["options"]:
+            bot.answer_callback_query(call.id, "Noto'g'ri ovoz berish varianti.", show_alert=True)
+            return
+
+        user_id = str(call.from_user.id)
+
+        # Проверяем, голосовал ли пользователь ранее
+        if user_id in voting_data["current_voting"].get("votes", {}):
+            bot.answer_callback_query(call.id, "Siz allaqachon ovoz bergansiz.", show_alert=True)
+            return
+
+        # Добавляем голос пользователя
+        username = call.from_user.username or call.from_user.first_name or call.from_user.last_name or "Anonim"
+        voting_data["current_voting"].setdefault("votes", {})[user_id] = option_id
+        voting_data["current_voting"]["options"][option_id]["votes"].append(username)
+
+        save_voting()
+
+        bot.answer_callback_query(call.id, "Ovozingiz qabul qilindi.", show_alert=True)
+    except KeyError as e:
+        bot.answer_callback_query(call.id, f"Noto'g'ri ovoz berish jarayoni: {e}", show_alert=True)
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"Xato yuz berdi: {e}", show_alert=True)
+
+
+# Show voting results (admin only)
+@bot.message_handler(commands=['votingresults'])
+def voting_results(message):
+    if message.chat.id not in ADMINS:
+        bot.reply_to(message, "Bu buyruq faqat administratorlar uchun.")
+        return
+
+    question = voting_data["current_voting"].get("question")
+    options = voting_data["current_voting"].get("options", {})
+
+    if not question:
+        bot.reply_to(message, "Hozircha ovoz berish mavjud emas.")
+        return
+
+    text = f"<b>Ovoz berish natijalari:</b>\n{question}\n\n"
+    for option_id, option in options.items():
+        voters = ", ".join(option["votes"])
+        text += f"<b>{option['text']}</b> : {len(option["votes"])} ta ovoz.\nOvoz berganlar: {voters if voters else 'Hech kim'}\n\n"
+
+    bot.send_message(message.chat.id, text, parse_mode='HTML')
+
 
 # Клиент: Включить чат с оператором
 @bot.message_handler(commands=['chat'])
